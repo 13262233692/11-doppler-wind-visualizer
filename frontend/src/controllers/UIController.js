@@ -39,6 +39,11 @@ class UIController {
       progressFill: document.getElementById('progressFill'),
       progressText: document.getElementById('progressText'),
       typeButtons: document.querySelectorAll('[data-type]'),
+      lodSelect: document.getElementById('lodSelect'),
+      statsPanel: document.getElementById('statsPanel'),
+      webglStatus: document.getElementById('webglStatus'),
+      contextLostAlert: document.getElementById('contextLostAlert'),
+      reloadBtn: document.getElementById('reloadBtn'),
     };
   }
 
@@ -85,6 +90,54 @@ class UIController {
         }
       });
     });
+
+    if (this.elements.lodSelect) {
+      this.elements.lodSelect.addEventListener('change', (e) => {
+        dataService.setLOD(e.target.value);
+        this.extractIsosurface();
+      });
+    }
+
+    if (this.elements.reloadBtn) {
+      this.elements.reloadBtn.addEventListener('click', () => {
+        location.reload();
+      });
+    }
+
+    this.initLODSelect();
+    this.initWebGLStatus();
+  }
+
+  initLODSelect() {
+    if (!this.elements.lodSelect) return;
+    
+    const lodLevels = dataService.getAvailableLODLevels();
+    this.elements.lodSelect.innerHTML = '';
+    
+    for (const [key, config] of Object.entries(lodLevels)) {
+      const option = document.createElement('option');
+      option.value = key;
+      option.textContent = `${config.description} (步长: ${config.step})`;
+      this.elements.lodSelect.appendChild(option);
+    }
+    
+    this.elements.lodSelect.value = dataService.getCurrentLOD();
+  }
+
+  initWebGLStatus() {
+    if (!this.elements.webglStatus) return;
+    
+    const extensions = this.threeRenderer.webglExtensions;
+    const has32Bit = !!extensions.elementIndexUint;
+    
+    this.elements.webglStatus.innerHTML = `
+      <div class="webgl-info">
+        <span class="status-badge ${has32Bit ? 'status-ok' : 'status-warn'}">
+          ${has32Bit ? '✅ 32位索引已启用' : '⚠️ 仅支持16位索引'}
+        </span>
+        ${!has32Bit ? '<span class="hint">将自动使用严格分块模式</span>' : ''}
+      </div>
+    `;
   }
 
   setupRendererCallbacks() {
@@ -95,9 +148,72 @@ class UIController {
     this.threeRenderer.setCompleteCallback((metadata) => {
       this.hideProgress();
       if (metadata) {
-        this.updateStatus(`✅ 等值面提取完成 - ${metadata.generatedTriangles} 个三角形, 阈值 ${metadata.threshold} ${metadata.isVelocity ? 'm/s' : 'dBZ'}`);
+        const unit = metadata.isVelocity ? 'm/s' : 'dBZ';
+        const stats = this.threeRenderer.getStats();
+        const verts = stats.totalVertices.toLocaleString();
+        const tris = stats.totalTriangles.toLocaleString();
+        const chunks = stats.chunkCount;
+        
+        this.updateStats(stats, metadata);
+        this.updateStatus(`✅ 提取完成 - ${verts} 顶点, ${tris} 三角形, ${chunks} 分块, 阈值 ${metadata.threshold} ${unit}`);
       }
     });
+
+    this.threeRenderer.setContextLostCallback(() => {
+      this.showContextLostAlert();
+      this.updateStatus('❌ 致命错误: WebGL 上下文已丢失，请刷新页面');
+    });
+
+    this.threeRenderer.setContextRestoredCallback(() => {
+      this.hideContextLostAlert();
+      this.initWebGLStatus();
+      this.updateStatus('🔄 WebGL 上下文已恢复，正在重新加载数据...');
+      if (dataService.getCurrentData()) {
+        this.extractIsosurface();
+      }
+    });
+
+    this.threeRenderer.setErrorCallback((error) => {
+      this.updateStatus(`❌ 渲染错误: ${error}`);
+    });
+  }
+
+  showContextLostAlert() {
+    if (this.elements.contextLostAlert) {
+      this.elements.contextLostAlert.style.display = 'flex';
+    }
+  }
+
+  hideContextLostAlert() {
+    if (this.elements.contextLostAlert) {
+      this.elements.contextLostAlert.style.display = 'none';
+    }
+  }
+
+  updateStats(stats, metadata) {
+    if (!this.elements.statsPanel) return;
+    
+    this.elements.statsPanel.style.display = 'block';
+    
+    const content = this.elements.statsPanel.querySelector('.stats-content') || this.elements.statsPanel;
+    
+    content.innerHTML = `
+      <div class="stats-grid">
+        <div class="stat-item">
+          <span class="stat-label">顶点数</span>
+          <span class="stat-value">${stats.totalVertices.toLocaleString()}</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">三角形</span>
+          <span class="stat-value">${stats.totalTriangles.toLocaleString()}</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">分块数</span>
+          <span class="stat-value">${stats.chunkCount}</span>
+        </div>
+        ${metadata?.simplified ? '<div class="stat-item"><span class="stat-label">LOD</span><span class="stat-value">已简化</span></div>' : ''}
+      </div>
+    `;
   }
 
   setDataType(type) {
@@ -179,19 +295,23 @@ class UIController {
   }
 
   extractIsosurface() {
-    const gridData = this.currentDataType === 'velocity' 
+    const rawGridData = this.currentDataType === 'velocity' 
       ? dataService.getVelocityGrid() 
       : dataService.getReflectivityGrid();
     
-    const gridDimensions = dataService.getGridDimensions();
+    const rawDimensions = dataService.getGridDimensions();
     const bounds = dataService.getBounds();
 
-    if (!gridData || !gridDimensions || !bounds) {
+    if (!rawGridData || !rawDimensions || !bounds) {
       this.updateStatus('⚠️ 请先加载数据');
       return;
     }
 
-    this.updateStatus(`⏳ 正在提取等值面 (阈值: ${this.threshold} ${this.currentDataType === 'velocity' ? 'm/s' : 'dBZ'})...`);
+    const lodResult = dataService.getGridWithLOD(rawGridData, rawDimensions);
+    const gridData = lodResult.grid;
+    const gridDimensions = lodResult.dims;
+
+    this.updateStatus(`⏳ 正在提取等值面 (${gridDimensions.nx}×${gridDimensions.ny}×${gridDimensions.nz}${lodResult.simplified ? ' 简化' : ''}, 阈值: ${this.threshold} ${this.currentDataType === 'velocity' ? 'm/s' : 'dBZ'})...`);
     this.showProgress(0);
 
     this.threeRenderer.extractIsosurface(

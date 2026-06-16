@@ -8,6 +8,16 @@
   <link rel="stylesheet" href="/src/styles/main.css">
 </head>
 <body>
+  <div id="contextLostAlert" class="context-lost-alert">
+    <div class="alert-content">
+      <h2>⚠️ WebGL 上下文丢失</h2>
+      <p>检测到 WebGL 渲染上下文已丢失。这通常发生在 GPU 内存不足或数据量过大时。</p>
+      <div class="alert-actions">
+        <button id="reloadBtn" class="btn btn-primary">🔄 刷新页面</button>
+      </div>
+    </div>
+  </div>
+
   <div id="app">
     <header class="header">
       <div class="header-content">
@@ -73,6 +83,28 @@
               <input type="checkbox" id="autoRotate">
               自动旋转
             </label>
+          </div>
+
+          <div class="control-group">
+            <label class="control-label">精度级别 (LOD)</label>
+            <select id="lodSelect" class="select-control">
+              <option value="HIGH">高精度 (全分辨率)</option>
+              <option value="MEDIUM">中等精度 (1/2)</option>
+              <option value="LOW">低精度 (1/4)</option>
+              <option value="ULTRA_LOW">超低精度 (1/8)</option>
+            </select>
+          </div>
+
+          <div class="control-group" id="webglStatus">
+            <label class="control-label">WebGL 状态</label>
+            <div class="webgl-status-content">检测中...</div>
+          </div>
+        </div>
+
+        <div class="panel" id="statsPanel" style="display: none;">
+          <h3 class="panel-title">📈 渲染统计</h3>
+          <div class="stats-content">
+            <p class="info-empty">等待数据加载...</p>
           </div>
         </div>
 

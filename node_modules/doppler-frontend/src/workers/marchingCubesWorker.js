@@ -292,29 +292,160 @@ const TRI_TABLE = new Int8Array([
   -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1
 ]);
 
+const HASH_PRECISION = 10000;
+const SAFE_VERTEX_LIMIT_16BIT = 65000;
+const SAFE_TRIANGLE_LIMIT_16BIT = 20000;
+const SAFE_VERTEX_LIMIT_32BIT = 1000000;
+const SAFE_TRIANGLE_LIMIT_32BIT = 300000;
+
+let currentChunk = null;
+let chunkIndex = 0;
+let totalChunksEstimated = 0;
+let vertexMap = null;
+let use32BitIndices = false;
+
 self.onmessage = function(e) {
-  const { type, gridData, gridDimensions, bounds, threshold, isVelocity = true } = e.data;
+  const { type, gridData, gridDimensions, bounds, threshold, isVelocity = true, use32BitIndices: use32Bit, maxVerticesPerChunk } = e.data;
   
   if (type === 'extract') {
     try {
-      const result = marchingCubes(gridData, gridDimensions, bounds, threshold, isVelocity);
-      self.postMessage({
-        type: 'result',
-        vertices: result.vertices,
-        normals: result.normals,
-        colors: result.colors,
-        metadata: result.metadata
-      });
+      use32BitIndices = use32Bit;
+      marchingCubes(gridData, gridDimensions, bounds, threshold, isVelocity, maxVerticesPerChunk);
     } catch (error) {
+      console.error('Marching Cubes error:', error);
       self.postMessage({
         type: 'error',
-        error: error.message
+        error: error.message || error.toString()
       });
     }
   }
 };
 
-function marchingCubes(gridData, dims, bounds, threshold, isVelocity) {
+function initNewChunk(maxVertices) {
+  const maxVerts = use32BitIndices 
+    ? Math.min(maxVertices, SAFE_VERTEX_LIMIT_32BIT)
+    : Math.min(maxVertices, SAFE_VERTEX_LIMIT_16BIT);
+  
+  currentChunk = {
+    vertices: new Float32Array(maxVerts * 3),
+    normals: new Float32Array(maxVerts * 3),
+    colors: new Float32Array(maxVerts * 4),
+    indices: [],
+    vertexCount: 0,
+    triangleCount: 0,
+    maxVertices: maxVerts
+  };
+  
+  vertexMap = new Map();
+}
+
+function flushChunk(metadata, isLast = false) {
+  if (!currentChunk || currentChunk.vertexCount === 0) {
+    return;
+  }
+  
+  const vertexCount = currentChunk.vertexCount;
+  const triangleCount = currentChunk.triangleCount;
+  
+  const vertices = new Float32Array(currentChunk.vertices.buffer, 0, vertexCount * 3);
+  const normals = new Float32Array(currentChunk.normals.buffer, 0, vertexCount * 3);
+  const colors = new Float32Array(currentChunk.colors.buffer, 0, vertexCount * 4);
+  const indices = new (use32BitIndices ? Uint32Array : Uint16Array)(currentChunk.indices);
+  
+  console.log(`📤 发送分块 ${chunkIndex}: ${vertexCount.toLocaleString()} 顶点, ${triangleCount.toLocaleString()} 三角形, ${indices.length.toLocaleString()} 索引`);
+  
+  self.postMessage({
+    type: 'chunk',
+    vertices: vertices,
+    normals: normals,
+    colors: colors,
+    indices: indices,
+    metadata: metadata,
+    chunkIndex: chunkIndex,
+    is32Bit: use32BitIndices,
+    totalChunks: totalChunksEstimated
+  }, [vertices.buffer, normals.buffer, colors.buffer, indices.buffer]);
+  
+  chunkIndex++;
+  currentChunk = null;
+  vertexMap = null;
+}
+
+function hashPosition(x, y, z) {
+  const hx = Math.round(x * HASH_PRECISION);
+  const hy = Math.round(y * HASH_PRECISION);
+  const hz = Math.round(z * HASH_PRECISION);
+  return `${hx},${hy},${hz}`;
+}
+
+function getOrAddVertex(v, normal, color) {
+  if (!currentChunk) {
+    return -1;
+  }
+  
+  const hash = hashPosition(v.x, v.y, v.z);
+  let idx = vertexMap.get(hash);
+  
+  if (idx !== undefined) {
+    return idx;
+  }
+  
+  idx = currentChunk.vertexCount;
+  
+  const safeLimit = use32BitIndices ? SAFE_VERTEX_LIMIT_32BIT : SAFE_VERTEX_LIMIT_16BIT;
+  if (idx >= safeLimit) {
+    return -2;
+  }
+  
+  const vIdx = idx * 3;
+  const cIdx = idx * 4;
+  
+  currentChunk.vertices[vIdx] = v.x;
+  currentChunk.vertices[vIdx + 1] = v.y;
+  currentChunk.vertices[vIdx + 2] = v.z;
+  
+  currentChunk.normals[vIdx] = normal.x;
+  currentChunk.normals[vIdx + 1] = normal.y;
+  currentChunk.normals[vIdx + 2] = normal.z;
+  
+  currentChunk.colors[cIdx] = color.r;
+  currentChunk.colors[cIdx + 1] = color.g;
+  currentChunk.colors[cIdx + 2] = color.b;
+  currentChunk.colors[cIdx + 3] = color.a;
+  
+  vertexMap.set(hash, idx);
+  currentChunk.vertexCount++;
+  
+  return idx;
+}
+
+function addTriangle(v0, v1, v2, normal, color, metadata) {
+  if (!currentChunk) return false;
+  
+  const safeTriLimit = use32BitIndices ? SAFE_TRIANGLE_LIMIT_32BIT : SAFE_TRIANGLE_LIMIT_16BIT;
+  if (currentChunk.triangleCount >= safeTriLimit) {
+    return false;
+  }
+  
+  const i0 = getOrAddVertex(v0, normal, color);
+  if (i0 === -1) return false;
+  if (i0 === -2) return false;
+  
+  const i1 = getOrAddVertex(v1, normal, color);
+  if (i1 === -1) return false;
+  if (i1 === -2) return false;
+  
+  const i2 = getOrAddVertex(v2, normal, color);
+  if (i2 === -1) return false;
+  if (i2 === -2) return false;
+  
+  currentChunk.indices.push(i0, i1, i2);
+  currentChunk.triangleCount++;
+  
+  return true;
+}
+
+function marchingCubes(gridData, dims, bounds, threshold, isVelocity, maxVerticesPerChunk) {
   const { nx, ny, nz } = dims;
   const { minX, maxX, minY, maxY, minZ, maxZ } = bounds;
   
@@ -322,41 +453,41 @@ function marchingCubes(gridData, dims, bounds, threshold, isVelocity) {
   const dy = (maxY - minY) / (ny - 1);
   const dz = (maxZ - minZ) / (nz - 1);
   
-  const vertices = [];
-  const normals = [];
-  const colors = [];
+  chunkIndex = 0;
+  const maxVerts = maxVerticesPerChunk || (use32BitIndices ? SAFE_VERTEX_LIMIT_32BIT : SAFE_VERTEX_LIMIT_16BIT);
+  initNewChunk(maxVerts);
   
   const valueCache = new Float32Array(8);
   const positionCache = new Array(8);
   const edgeVertices = new Array(12);
   
   let processedVoxels = 0;
-  let generatedTriangles = 0;
+  let totalTriangles = 0;
+  let totalVertices = 0;
   
-  const progressInterval = Math.max(1, Math.floor((nx - 1) * (ny - 1) * (nz - 1) / 20));
+  const totalVoxels = (nx - 1) * (ny - 1) * (nz - 1);
+  const progressInterval = Math.max(1, Math.floor(totalVoxels / 20));
+  
+  const metadata = {
+    bounds,
+    threshold,
+    isVelocity,
+    gridDimensions: dims
+  };
   
   for (let z = 0; z < nz - 1; z++) {
     for (let y = 0; y < ny - 1; y++) {
       for (let x = 0; x < nx - 1; x++) {
         
         const baseIdx = z * nx * ny + y * nx + x;
-        const idx000 = baseIdx;
-        const idx100 = baseIdx + 1;
-        const idx010 = baseIdx + nx;
-        const idx110 = baseIdx + nx + 1;
-        const idx001 = baseIdx + nx * ny;
-        const idx101 = baseIdx + nx * ny + 1;
-        const idx011 = baseIdx + nx * ny + nx;
-        const idx111 = baseIdx + nx * ny + nx + 1;
-        
-        valueCache[0] = gridData[idx000];
-        valueCache[1] = gridData[idx100];
-        valueCache[2] = gridData[idx110];
-        valueCache[3] = gridData[idx010];
-        valueCache[4] = gridData[idx001];
-        valueCache[5] = gridData[idx101];
-        valueCache[6] = gridData[idx111];
-        valueCache[7] = gridData[idx011];
+        valueCache[0] = gridData[baseIdx];
+        valueCache[1] = gridData[baseIdx + 1];
+        valueCache[2] = gridData[baseIdx + nx + 1];
+        valueCache[3] = gridData[baseIdx + nx];
+        valueCache[4] = gridData[baseIdx + nx * ny];
+        valueCache[5] = gridData[baseIdx + nx * ny + 1];
+        valueCache[6] = gridData[baseIdx + nx * ny + nx + 1];
+        valueCache[7] = gridData[baseIdx + nx * ny + nx];
         
         let cubeIndex = 0;
         for (let i = 0; i < 8; i++) {
@@ -398,6 +529,10 @@ function marchingCubes(gridData, dims, bounds, threshold, isVelocity) {
         if (edgeFlags & 1024) edgeVertices[10] = interpolateEdge(positionCache[2], positionCache[6], valueCache[2], valueCache[6], threshold);
         if (edgeFlags & 2048) edgeVertices[11] = interpolateEdge(positionCache[3], positionCache[7], valueCache[3], valueCache[7], threshold);
         
+        const avgValue = (valueCache[0] + valueCache[1] + valueCache[2] + valueCache[3] + 
+                         valueCache[4] + valueCache[5] + valueCache[6] + valueCache[7]) / 8;
+        const color = getColorForValue(avgValue, threshold, isVelocity);
+        
         let triIndex = cubeIndex * 16;
         for (let i = 0; TRI_TABLE[triIndex] !== -1; i += 3) {
           const idx0 = TRI_TABLE[triIndex + i];
@@ -417,47 +552,54 @@ function marchingCubes(gridData, dims, bounds, threshold, isVelocity) {
           const nz = ax * by - ay * bx;
           const len = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
           
-          const avgValue = (valueCache[0] + valueCache[1] + valueCache[2] + valueCache[3] + 
-                           valueCache[4] + valueCache[5] + valueCache[6] + valueCache[7]) / 8;
-          const color = getColorForValue(avgValue, threshold, isVelocity);
+          const normal = {
+            x: nx / len,
+            y: ny / len,
+            z: nz / len
+          };
           
-          vertices.push(v0.x, v0.y, v0.z);
-          normals.push(nx / len, ny / len, nz / len);
-          colors.push(color.r, color.g, color.b, color.a);
+          let added = addTriangle(v0, v1, v2, normal, color, metadata);
           
-          vertices.push(v1.x, v1.y, v1.z);
-          normals.push(nx / len, ny / len, nz / len);
-          colors.push(color.r, color.g, color.b, color.a);
+          if (!added) {
+            flushChunk(metadata, false);
+            initNewChunk(maxVerts);
+            added = addTriangle(v0, v1, v2, normal, color, metadata);
+          }
           
-          vertices.push(v2.x, v2.y, v2.z);
-          normals.push(nx / len, ny / len, nz / len);
-          colors.push(color.r, color.g, color.b, color.a);
-          
-          generatedTriangles++;
+          if (added) {
+            totalTriangles++;
+          }
         }
         
         processedVoxels++;
         if (processedVoxels % progressInterval === 0) {
           self.postMessage({
             type: 'progress',
-            progress: processedVoxels / ((nx - 1) * (ny - 1) * (nz - 1))
+            progress: processedVoxels / totalVoxels
           });
         }
       }
     }
   }
   
-  return {
-    vertices: new Float32Array(vertices),
-    normals: new Float32Array(normals),
-    colors: new Float32Array(colors),
+  flushChunk(metadata, true);
+  totalVertices = chunkIndex > 0 ? (chunkIndex - 1) * maxVerts + (currentChunk ? currentChunk.vertexCount : 0) : 0;
+  
+  console.log(`✅ Marching Cubes 完成: ${totalVertices.toLocaleString()} 顶点, ${totalTriangles.toLocaleString()} 三角形, ${chunkIndex} 个分块`);
+  
+  self.postMessage({
+    type: 'complete',
+    totalChunks: chunkIndex,
+    totalVertices: totalVertices,
+    totalTriangles: totalTriangles,
     metadata: {
+      ...metadata,
       processedVoxels,
-      generatedTriangles,
-      threshold,
-      isVelocity
+      totalTriangles,
+      totalVertices,
+      chunkCount: chunkIndex
     }
-  };
+  });
 }
 
 function interpolateEdge(p1, p2, v1, v2, threshold) {

@@ -1,7 +1,101 @@
+const LOD_LEVELS = {
+  HIGH: { step: 1, maxGridSize: 128, description: '高精度' },
+  MEDIUM: { step: 2, maxGridSize: 64, description: '中等精度' },
+  LOW: { step: 4, maxGridSize: 32, description: '低精度' },
+  ULTRA_LOW: { step: 8, maxGridSize: 16, description: '超低精度' },
+};
+
 class DataService {
   constructor() {
     this.baseUrl = '/api';
     this.currentData = null;
+    this.currentLOD = 'HIGH';
+  }
+
+  getAvailableLODLevels() {
+    return LOD_LEVELS;
+  }
+
+  getCurrentLOD() {
+    return this.currentLOD;
+  }
+
+  setLOD(level) {
+    if (LOD_LEVELS[level]) {
+      this.currentLOD = level;
+      console.log(`LOD 级别已设置为: ${LOD_LEVELS[level].description}`);
+      return true;
+    }
+    return false;
+  }
+
+  autoSelectLOD(gridSize) {
+    if (gridSize <= 32) return 'HIGH';
+    if (gridSize <= 64) return 'MEDIUM';
+    if (gridSize <= 128) return 'LOW';
+    return 'ULTRA_LOW';
+  }
+
+  simplifyGrid(grid, originalDims, targetDims) {
+    const { nx, ny, nz } = originalDims;
+    const { nx: tnx, ny: tny, nz: tnz } = targetDims;
+    
+    const stepX = Math.max(1, Math.floor(nx / tnx));
+    const stepY = Math.max(1, Math.floor(ny / tny));
+    const stepZ = Math.max(1, Math.floor(nz / tnz));
+    
+    const simplified = new Float32Array(tnx * tny * tnz);
+    
+    for (let z = 0; z < tnz; z++) {
+      for (let y = 0; y < tny; y++) {
+        for (let x = 0; x < tnx; x++) {
+          const srcX = Math.min(x * stepX, nx - 1);
+          const srcY = Math.min(y * stepY, ny - 1);
+          const srcZ = Math.min(z * stepZ, nz - 1);
+          
+          const srcIdx = srcZ * nx * ny + srcY * nx + srcX;
+          const dstIdx = z * tnx * tny + y * tnx + x;
+          
+          simplified[dstIdx] = grid[srcIdx];
+        }
+      }
+    }
+    
+    return simplified;
+  }
+
+  getGridWithLOD(gridData, dims, lodLevel = null) {
+    const lod = lodLevel || this.currentLOD;
+    const lodConfig = LOD_LEVELS[lod] || LOD_LEVELS.HIGH;
+    
+    const { nx, ny, nz } = dims;
+    const totalSize = nx * ny * nz;
+    
+    if (totalSize <= lodConfig.maxGridSize * lodConfig.maxGridSize * lodConfig.maxGridSize && lodConfig.step === 1) {
+      return {
+        grid: gridData,
+        dims: dims,
+        lod: lod,
+        simplified: false,
+      };
+    }
+    
+    const targetNx = Math.max(16, Math.min(lodConfig.maxGridSize, Math.floor(nx / lodConfig.step)));
+    const targetNy = Math.max(16, Math.min(lodConfig.maxGridSize, Math.floor(ny / lodConfig.step)));
+    const targetNz = Math.max(16, Math.min(lodConfig.maxGridSize, Math.floor(nz / lodConfig.step)));
+    
+    const targetDims = { nx: targetNx, ny: targetNy, nz: targetNz };
+    const simplifiedGrid = this.simplifyGrid(gridData, dims, targetDims);
+    
+    console.log(`网格已简化: ${nx}×${ny}×${nz} → ${targetNx}×${targetNy}×${targetNz} (LOD: ${lodConfig.description})`);
+    
+    return {
+      grid: simplifiedGrid,
+      dims: targetDims,
+      lod: lod,
+      simplified: true,
+      originalDims: dims,
+    };
   }
 
   async getHealth() {
