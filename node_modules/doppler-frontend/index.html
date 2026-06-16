@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>多普勒雷达体扫数据 3D 渲染与分析系统</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="/src/styles/main.css">
+</head>
+<body>
+  <div id="app">
+    <header class="header">
+      <div class="header-content">
+        <h1 class="title">
+          <span class="icon">🌪️</span>
+          多普勒雷达体扫数据 3D 渲染与分析系统
+        </h1>
+        <div class="header-actions">
+          <button id="loadSampleBtn" class="btn btn-primary">
+            <span>📊</span> 加载示例数据
+          </button>
+          <label class="btn btn-secondary">
+            <span>📁</span> 上传 NC 文件
+            <input type="file" id="fileInput" accept=".nc" style="display: none;">
+          </label>
+        </div>
+      </div>
+    </header>
+
+    <main class="main-content">
+      <aside class="sidebar">
+        <div class="panel">
+          <h3 class="panel-title">⚙️ 渲染控制</h3>
+          
+          <div class="control-group">
+            <label class="control-label">数据类型</label>
+            <div class="btn-group">
+              <button class="btn btn-sm active" data-type="velocity">径向速度</button>
+              <button class="btn btn-sm" data-type="reflectivity">反射率因子</button>
+            </div>
+          </div>
+
+          <div class="control-group">
+            <label class="control-label">
+              阈值: <span id="thresholdValue">25</span> m/s
+            </label>
+            <input type="range" id="thresholdSlider" min="0" max="50" value="25" step="1" class="slider">
+          </div>
+
+          <div class="control-group">
+            <label class="control-label">
+              透明度: <span id="opacityValue">0.6</span>
+            </label>
+            <input type="range" id="opacitySlider" min="0.1" max="1" value="0.6" step="0.1" class="slider">
+          </div>
+
+          <div class="control-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="showWireframe" checked>
+              显示线框
+            </label>
+          </div>
+
+          <div class="control-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="showAxes" checked>
+              显示坐标轴
+            </label>
+          </div>
+
+          <div class="control-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="autoRotate">
+              自动旋转
+            </label>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3 class="panel-title">📡 雷达信息</h3>
+          <div id="radarInfo" class="info-content">
+            <p class="info-empty">请先加载数据</p>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3 class="panel-title">📊 处理状态</h3>
+          <div id="statusContent" class="info-content">
+            <p class="info-empty">等待数据加载...</p>
+          </div>
+          <div class="progress-bar" id="progressBar" style="display: none;">
+            <div class="progress-fill" id="progressFill"></div>
+            <span class="progress-text" id="progressText">0%</span>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3 class="panel-title">🎮 操作说明</h3>
+          <ul class="tips-list">
+            <li><strong>左键拖拽:</strong> 旋转视角</li>
+            <li><strong>右键拖拽:</strong> 平移视角</li>
+            <li><strong>滚轮:</strong> 缩放</li>
+            <li><strong>调整阈值:</strong> 实时更新等值面</li>
+          </ul>
+        </div>
+      </aside>
+
+      <section class="content-area">
+        <div class="view-container">
+          <div id="threeContainer" class="three-view"></div>
+          <div id="mapContainer" class="map-view"></div>
+        </div>
+        
+        <div class="legend">
+          <div class="legend-item">
+            <div class="legend-gradient velocity-gradient"></div>
+            <span>风速 (m/s)</span>
+            <div class="legend-labels">
+              <span>0</span>
+              <span>25</span>
+              <span>50</span>
+            </div>
+          </div>
+          <div class="legend-item">
+            <div class="legend-gradient reflectivity-gradient"></div>
+            <span>反射率 (dBZ)</span>
+            <div class="legend-labels">
+              <span>0</span>
+              <span>30</span>
+              <span>60</span>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
