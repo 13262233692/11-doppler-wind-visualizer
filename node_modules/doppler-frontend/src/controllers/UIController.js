@@ -44,6 +44,14 @@ class UIController {
       webglStatus: document.getElementById('webglStatus'),
       contextLostAlert: document.getElementById('contextLostAlert'),
       reloadBtn: document.getElementById('reloadBtn'),
+      windParticlesEnabled: document.getElementById('windParticlesEnabled'),
+      windParticleCountSlider: document.getElementById('windParticleCountSlider'),
+      windParticleCountValue: document.getElementById('windParticleCountValue'),
+      windTrailLengthSlider: document.getElementById('windTrailLengthSlider'),
+      windTrailLengthValue: document.getElementById('windTrailLengthValue'),
+      windSpeedScaleSlider: document.getElementById('windSpeedScaleSlider'),
+      windSpeedScaleValue: document.getElementById('windSpeedScaleValue'),
+      windParticlesPaused: document.getElementById('windParticlesPaused'),
     };
   }
 
@@ -106,6 +114,37 @@ class UIController {
 
     this.initLODSelect();
     this.initWebGLStatus();
+    this.initWindParticleControls();
+  }
+
+  initWindParticleControls() {
+    if (!this.elements.windParticlesEnabled) return;
+
+    this.elements.windParticlesEnabled.addEventListener('change', (e) => {
+      this.threeRenderer.setWindParticlesVisible(e.target.checked);
+    });
+
+    this.elements.windParticleCountSlider.addEventListener('input', (e) => {
+      const value = parseInt(e.target.value);
+      this.elements.windParticleCountValue.textContent = value;
+      this.threeRenderer.setWindParticleCount(value);
+    });
+
+    this.elements.windTrailLengthSlider.addEventListener('input', (e) => {
+      const value = parseInt(e.target.value);
+      this.elements.windTrailLengthValue.textContent = value;
+      this.threeRenderer.setWindTrailLength(value);
+    });
+
+    this.elements.windSpeedScaleSlider.addEventListener('input', (e) => {
+      const value = parseFloat(e.target.value);
+      this.elements.windSpeedScaleValue.textContent = value.toFixed(1);
+      this.threeRenderer.setWindSpeedScale(value);
+    });
+
+    this.elements.windParticlesPaused.addEventListener('change', (e) => {
+      this.threeRenderer.setWindParticlesPaused(e.target.checked);
+    });
   }
 
   initLODSelect() {
@@ -197,6 +236,22 @@ class UIController {
     
     const content = this.elements.statsPanel.querySelector('.stats-content') || this.elements.statsPanel;
     
+    const particleStats = this.threeRenderer.getWindParticleStats();
+    
+    let particleHtml = '';
+    if (particleStats) {
+      particleHtml = `
+        <div class="stat-item">
+          <span class="stat-label">粒子数</span>
+          <span class="stat-value">${particleStats.particleCount.toLocaleString()}</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">轨迹段</span>
+          <span class="stat-value">${(particleStats.particleCount * (particleStats.trailLength - 1)).toLocaleString()}</span>
+        </div>
+      `;
+    }
+    
     content.innerHTML = `
       <div class="stats-grid">
         <div class="stat-item">
@@ -211,6 +266,7 @@ class UIController {
           <span class="stat-label">分块数</span>
           <span class="stat-value">${stats.chunkCount}</span>
         </div>
+        ${particleHtml}
         ${metadata?.simplified ? '<div class="stat-item"><span class="stat-label">LOD</span><span class="stat-value">已简化</span></div>' : ''}
       </div>
     `;
@@ -291,6 +347,18 @@ class UIController {
     
     setTimeout(() => {
       this.extractIsosurface();
+      
+      const velocityGrid = data.velocityGrid;
+      if (velocityGrid) {
+        const gridArr = new Float32Array(velocityGrid);
+        const particleCount = parseInt(this.elements.windParticleCountSlider?.value || '10000');
+        this.threeRenderer.initWindParticles(
+          gridArr,
+          data.gridDimensions,
+          data.bounds,
+          particleCount
+        );
+      }
     }, 500);
   }
 

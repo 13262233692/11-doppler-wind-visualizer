@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import WindFieldParticleSystem from '../particles/WindFieldParticleSystem.js';
 
 const MAX_VERTICES_PER_CHUNK = 65000;
 const MAX_TRIANGLES_PER_CHUNK = 20000;
@@ -27,6 +28,9 @@ class ThreeRenderer {
     this.webglExtensions = {};
     this.contextLost = false;
     this.disposed = false;
+    
+    this.windParticleSystem = null;
+    this.lastFrameTime = performance.now();
     
     this.stats = {
       totalVertices: 0,
@@ -495,6 +499,64 @@ class ThreeRenderer {
     return this.contextLost;
   }
 
+  initWindParticles(scalarGrid, dims, bounds, count) {
+    if (this.windParticleSystem) {
+      this.windParticleSystem.dispose();
+    }
+    
+    this.windParticleSystem = new WindFieldParticleSystem(this.scene, bounds);
+    this.windParticleSystem.buildWindFieldFromScalar(scalarGrid, dims, bounds);
+    this.windParticleSystem.init(count || 10000);
+    
+    console.log(`🌬️ 风场粒子系统已初始化: ${this.windParticleSystem.getParticleCount()} 个粒子`);
+  }
+
+  setWindParticlesVisible(visible) {
+    if (this.windParticleSystem) {
+      this.windParticleSystem.setVisible(visible);
+    }
+  }
+
+  setWindParticleCount(count) {
+    if (this.windParticleSystem) {
+      this.windParticleSystem.setParticleCount(count);
+    }
+  }
+
+  setWindTrailLength(length) {
+    if (this.windParticleSystem) {
+      this.windParticleSystem.setTrailLength(length);
+    }
+  }
+
+  setWindSpeedScale(scale) {
+    if (this.windParticleSystem) {
+      this.windParticleSystem.setSpeedScale(scale);
+    }
+  }
+
+  setWindParticlesPaused(paused) {
+    if (this.windParticleSystem) {
+      this.windParticleSystem.setPaused(paused);
+    }
+  }
+
+  isWindParticlesActive() {
+    return !!this.windParticleSystem;
+  }
+
+  getWindParticleStats() {
+    if (!this.windParticleSystem) return null;
+    return {
+      particleCount: this.windParticleSystem.getParticleCount(),
+      activeCount: this.windParticleSystem.getActiveParticleCount(),
+      trailLength: this.windParticleSystem.trailLength,
+      speedScale: this.windParticleSystem.speedScale,
+      visible: this.windParticleSystem.visible,
+      paused: this.windParticleSystem.paused,
+    };
+  }
+
   onResize() {
     const width = this.container.clientWidth;
     const height = this.container.clientHeight;
@@ -506,6 +568,17 @@ class ThreeRenderer {
 
   animate() {
     this.animationId = requestAnimationFrame(() => this.animate());
+    
+    const now = performance.now();
+    const deltaMs = now - this.lastFrameTime;
+    this.lastFrameTime = now;
+    
+    const dt = Math.min(deltaMs / 1000, 0.05);
+    
+    if (this.windParticleSystem) {
+      this.windParticleSystem.update(dt);
+    }
+    
     this.controls.update();
     this.renderer.render(this.scene, this.camera);
   }
@@ -521,6 +594,11 @@ class ThreeRenderer {
     if (this.worker) {
       this.worker.terminate();
       this.worker = null;
+    }
+    
+    if (this.windParticleSystem) {
+      this.windParticleSystem.dispose();
+      this.windParticleSystem = null;
     }
     
     this.clearIsosurfaceMeshes();
